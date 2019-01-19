@@ -16,7 +16,7 @@ How to Use
 * Set your WiFi credentials in the sketch.
 * Set your MQTT server/credentials in the sketch.
 * Update the published topics in the sketch, if desired.
-* Flash to any ESP32 board.
+* Flash to any ESP32 board.  NOTE: The Bluetooth library is HUGE, so in the Arduino IDE you might need to change "Tools" -> Partition Scheme" to something like "No OTA" to create enough space for the compiled sketch.
 * Watch the Serial output to make sure it works.
 
 Usage Details
