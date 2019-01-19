@@ -41,7 +41,7 @@
 #define MQTT_PORT 1883
 #define MQTT_USER "YOUR USERNAME"
 #define MQTT_PASS "YOUR PASSWORD"
-#define MQTT_CLIENT "radon_client
+#define MQTT_CLIENT "radon_client"
 
 // The MQTT topic to publish a 24 hour average of radon levels to.
 #define TOPIC_RADON_24HR "stat/airthings/radon24hour"
