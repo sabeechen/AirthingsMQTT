@@ -28,20 +28,25 @@
    * The ESP32's bluetooth stack is a little unstable IMHO so expect this to
      hang for a few minutes, restart prematurely, and report errors often.
 */
-#include "BLEDevice.h"
+#include <FS.h>
+#include <BLEDevice.h>
 #include <WiFi.h>
-#include <PubSubClient.h>
+#include <SPIFFS.h>
+#include <PubSubClient.h>         //https://github.com/knolleary/pubsubclient
+#include <WiFiManager.h>          //https://github.com/tzapu/WiFiManager/archive/development.zip
+#include <ArduinoJson.h>          //https://github.com/bblanchon/ArduinoJson
 
+#define HOSTNAME "radon_client"
 // WiFi credentials.
-#define WIFI_SSID "YOUR SSID"
-#define WIFI_PASS "YOUR PASSWORD"
+// #define WIFI_SSID "YOUR SSID"
+// #define WIFI_PASS "YOUR PASSWORD"
 
 // MQTT Settings.
-#define MQTT_HOST "YOUR HOST"
-#define MQTT_PORT 1883
-#define MQTT_USER "YOUR USERNAME"
-#define MQTT_PASS "YOUR PASSWORD"
-#define MQTT_CLIENT "radon_client"
+char mqtt_server[40] = "192.168.0.xxx";
+char mqtt_username[40] = "";
+char mqtt_password[40] = "";
+char mqtt_port[6] = "1883";
+char mqtt_client_name[100] = HOSTNAME;
 
 // The MQTT topic to publish a 24 hour average of radon levels to.
 #define TOPIC_RADON_24HR "stat/airthings/radon24hour"
@@ -147,8 +152,8 @@ bool getAndRecordReadings(BLEAddress pAddress) {
   // Connect and publish to MQTT.
   WiFiClient espClient;
   PubSubClient mqtt(espClient);
-  mqtt.setServer(MQTT_HOST, MQTT_PORT);
-  if (!mqtt.connect("RADON_CLIENT", MQTT_USER, MQTT_PASS) ||
+  mqtt.setServer(mqtt_server, atoi(mqtt_port));
+  if (!mqtt.connect(mqtt_client_name, mqtt_username, mqtt_password) ||
       !mqtt.publish(TOPIC_RADON_24HR, String(radon).c_str()) ||
       !mqtt.publish(TOPIC_RADON_LIFETIME, String(radonLongterm).c_str()) ||
       !mqtt.publish(TOPIC_TEMPERATURE, String(temperature).c_str()) ||
@@ -182,12 +187,180 @@ class FoundDeviceCallback: public BLEAdvertisedDeviceCallbacks {
   }
 };
 
+// /****************************  Read/Write MQTT Settings from SPIFFs ****************************************/
+
+bool readConfigFS()
+{
+  //if (resetsettings) { SPIFFS.begin(); SPIFFS.remove("/config.json"); SPIFFS.format(); delay(1000);}
+  if (SPIFFS.exists("/config.json"))
+  {
+    Serial.print(F("Read cfg: "));
+    File configFile = SPIFFS.open("/config.json", "r");
+    if (configFile)
+    {
+      size_t size = configFile.size(); // Allocate a buffer to store contents of the file.
+      std::unique_ptr<char[]> buf(new char[size]);
+      configFile.readBytes(buf.get(), size);
+      StaticJsonDocument<200> jsonBuffer;
+      DeserializationError error = deserializeJson(jsonBuffer, buf.get());
+      if (!error)
+      {
+        JsonObject json = jsonBuffer.as<JsonObject>();
+        serializeJson(json, Serial);
+        strcpy(mqtt_server, json["mqtt_server"]);
+        strcpy(mqtt_port, json["mqtt_port"]);
+        strcpy(mqtt_username, json["mqtt_username"]);
+        strcpy(mqtt_password, json["mqtt_password"]);
+        return true;
+      }
+      else
+        Serial.println(F("Failed to parse JSON!"));
+    }
+    else
+      Serial.println(F("Failed to open \"/config.json\""));
+  }
+  else
+    Serial.println(F("Couldn't find \"/config.json\""));
+  return false;
+}
+
+bool writeConfigFS()
+{
+  Serial.print(F("Saving /config.json: "));
+  StaticJsonDocument<200> jsonBuffer;
+  JsonObject json = jsonBuffer.to<JsonObject>();
+  json["mqtt_server"] = mqtt_server;
+  json["mqtt_port"] = mqtt_port;
+  json["mqtt_username"] = mqtt_username;
+  json["mqtt_password"] = mqtt_password;
+  File configFile = SPIFFS.open("/config.json", "w");
+  if (!configFile)
+  {
+    Serial.println(F("failed to open config file for writing"));
+    return false;
+  }
+  serializeJson(json, Serial);
+  serializeJson(json, configFile);
+  configFile.close();
+  Serial.println(F("ok!"));
+  return true;
+}
+
+// /*****************  Read SPIFFs values *****************************/
+void listDir(fs::FS &fs, const char *dirname, uint8_t levels)
+{
+  Serial.printf("Listing directory: %s\n", dirname);
+
+  File root = fs.open(dirname);
+  if (!root)
+  {
+    Serial.println("Failed to open directory");
+    return;
+  }
+  if (!root.isDirectory())
+  {
+    Serial.println("Not a directory");
+    return;
+  }
+
+  File file = root.openNextFile();
+  while (file)
+  {
+    if (file.isDirectory())
+    {
+      Serial.print("  DIR : ");
+      Serial.print(file.name());
+      time_t t = file.getLastWrite();
+      struct tm *tmstruct = localtime(&t);
+      Serial.printf("  LAST WRITE: %d-%02d-%02d %02d:%02d:%02d\n", (tmstruct->tm_year) + 1900, (tmstruct->tm_mon) + 1, tmstruct->tm_mday, tmstruct->tm_hour, tmstruct->tm_min, tmstruct->tm_sec);
+      if (levels)
+      {
+        listDir(fs, file.name(), levels - 1);
+      }
+    }
+    else
+    {
+      Serial.print("  FILE: ");
+      Serial.print(file.name());
+      Serial.print("  SIZE: ");
+      Serial.print(file.size());
+      time_t t = file.getLastWrite();
+      struct tm *tmstruct = localtime(&t);
+      Serial.printf("  LAST WRITE: %d-%02d-%02d %02d:%02d:%02d\n", (tmstruct->tm_year) + 1900, (tmstruct->tm_mon) + 1, tmstruct->tm_mday, tmstruct->tm_hour, tmstruct->tm_min, tmstruct->tm_sec);
+    }
+    file = root.openNextFile();
+  }
+  Serial.println(F("SPIFFs started"));
+  Serial.println(F("---------------------------"));
+}
+
+// /*****************  WiFiManager *****************************/
+bool shouldSaveConfig = false;
+
+void saveConfigCallback()
+{
+  Serial.println("Should save config");
+  shouldSaveConfig = true;
+}
+
+// /*****************  Setup *****************************/
 void setup() {
   Serial.begin(115200);
 
-  // Start up WiFi early so it'll probably be ready by the time 
-  // we're reading from Airthings.
-  WiFi.begin(WIFI_SSID, WIFI_PASS);
+  Serial.println(F("---------------------------"));
+  Serial.println(F("Starting SPIFFs"));
+
+  if (SPIFFS.begin(true)) //format SPIFFS if needed
+  {
+    listDir(SPIFFS, "/", 0);
+  }
+
+  if (readConfigFS())
+    Serial.println(F(" yay!"));
+
+  char NameChipId[64] = {0}, chipId[9] = {0};
+  WiFi.mode(WIFI_STA); // Make sure you're in station mode
+  WiFi.setHostname(HOSTNAME);
+  snprintf(chipId, sizeof(chipId), "%08x", (uint32_t)ESP.getEfuseMac());
+  snprintf(NameChipId, sizeof(NameChipId), "%s_%08x", HOSTNAME, (uint32_t)ESP.getEfuseMac());
+  WiFi.setHostname(const_cast<char *>(NameChipId));
+  WiFiManager wifiManager;
+
+  WiFiManagerParameter custom_mqtt_server("mqtt_server", "mqtt server", mqtt_server, 40);
+  WiFiManagerParameter custom_mqtt_username("mqtt_username", "mqtt username", mqtt_username, 40, " maxlength=31");
+  WiFiManagerParameter custom_mqtt_password("mqtt_password", "mqtt password", mqtt_password, 40, " maxlength=31 type='password'");
+  WiFiManagerParameter custom_mqtt_port("mqtt_port", "mqtt port", mqtt_port, 6);
+
+  wifiManager.setSaveConfigCallback(saveConfigCallback);
+
+  wifiManager.addParameter(&custom_mqtt_server);
+  wifiManager.addParameter(&custom_mqtt_port);
+  wifiManager.addParameter(&custom_mqtt_username);
+  wifiManager.addParameter(&custom_mqtt_password);
+
+  if (!wifiManager.autoConnect(HOSTNAME))
+  {
+    Serial.println(F("failed to connect and hit timeout"));
+    delay(3000);
+    ESP.restart();
+    delay(5000);
+  }
+  Serial.println(F("connected!"));
+
+  strcpy(mqtt_server, custom_mqtt_server.getValue());
+  strcpy(mqtt_port, custom_mqtt_port.getValue());
+  strcpy(mqtt_username, custom_mqtt_username.getValue());
+  strcpy(mqtt_password, custom_mqtt_password.getValue());
+
+  if (shouldSaveConfig)
+  {
+    writeConfigFS();
+    shouldSaveConfig = false;
+  }
+
+  byte mac[6];
+  WiFi.macAddress(mac);
+  sprintf(mqtt_client_name, "%02X%02X%02X%02X%02X%02X%s", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], HOSTNAME);
 
   // Scan for an Airthings device.
   Serial.println("Scanning for airthings devices");

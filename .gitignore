@@ -1,1 +1,6 @@
 .DS_Store
+.pio
+.pioenvs
+.piolibdeps
+.vscode
+lib
