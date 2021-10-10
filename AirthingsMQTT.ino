@@ -43,19 +43,20 @@
 #define MQTT_PASS "YOUR PASSWORD"
 #define MQTT_CLIENT "airthings"
 
+// Topics MUST contain the string "/x/", which will get replaced by the deviceId.
 // The MQTT topic to publish a 24 hour average of radon levels to.
-#define TOPIC_RADON_24HR "airthings/radon24hour"
+#define TOPIC_RADON_24HR "airthings/x/radon24hour"
 // The MQTT topic to publish the lifetime radon average to.  Documentation
 // says this will be the average ever since the batteries were removed.
-#define TOPIC_RADON_LIFETIME "airthings/radonLifetime"
+#define TOPIC_RADON_LIFETIME "airthings/x/radonLifetime"
 // Topics for temperature and humidity.
-#define TOPIC_TEMPERATURE "airthings/temperature"
-#define TOPIC_HUMIDITY "airthings/humidity"
-#define TOPIC_PRESSURE "airthings/pressure"
-#define TOPIC_CO2 "airthings/co2"
-#define TOPIC_VOC "airthings/voc"
-#define TOPIC_VERSION "airthings/version"
-#define TOPIC_AMBIENTLIGHT "airthings/ambientlight"
+#define TOPIC_TEMPERATURE "airthings/x/temperature"
+#define TOPIC_HUMIDITY "airthings/x/humidity"
+#define TOPIC_PRESSURE "airthings/x/pressure"
+#define TOPIC_CO2 "airthings/x/co2"
+#define TOPIC_VOC "airthings/x/voc"
+#define TOPIC_VERSION "airthings/x/version"
+#define TOPIC_AMBIENTLIGHT "airthings/x/ambientlight"
 
 // Unlikely you'll need to chnage any of the settings below.
 
@@ -199,6 +200,13 @@ bool readWavePlusSensors(BLERemoteService *pRemoteService, WaveReadings *reading
   return true;
 }
 
+bool publish(PubSubClient *mqtt, String topic, String deviceId, String value)
+{
+  topic.replace("/x/", deviceId.c_str());
+  Serial.printf("Publishing: %s %s\n", topic.c_str(), value.c_str());
+  return mqtt->publish(topic.c_str(), value.c_str());
+}
+
 bool getAndRecordReadings(BLEAddress pAddress) {
   Serial.println();
   Serial.println("Connecting...");
@@ -275,10 +283,13 @@ bool getAndRecordReadings(BLEAddress pAddress) {
   Serial.println(".. connected.");
 
   Serial.println("Publishing to MQTT..");
-  if (!mqtt.publish(TOPIC_RADON_24HR, readings.radon.c_str()) ||
-      !mqtt.publish(TOPIC_RADON_LIFETIME, readings.radonLongterm.c_str()) ||
-      !mqtt.publish(TOPIC_TEMPERATURE, readings.temperature.c_str()) ||
-      !mqtt.publish(TOPIC_HUMIDITY, readings.humidity.c_str()))
+  String deviceId = "/";
+  deviceId += pAddress.toString().c_str();
+  deviceId += "/";
+  if (!publish(&mqtt, TOPIC_RADON_24HR, deviceId, readings.radon) ||
+      !publish(&mqtt, TOPIC_RADON_LIFETIME, deviceId, readings.radonLongterm) ||
+      !publish(&mqtt, TOPIC_TEMPERATURE, deviceId, readings.temperature) ||
+      !publish(&mqtt, TOPIC_HUMIDITY, deviceId, readings.humidity))
   {
     Serial.println(".. error publishing!");
     return false;
@@ -286,11 +297,11 @@ bool getAndRecordReadings(BLEAddress pAddress) {
 
   if (airthingsProduct == WAVEPLUS)
   {
-    if (!mqtt.publish(TOPIC_PRESSURE, readings.pressure.c_str()) ||
-        !mqtt.publish(TOPIC_CO2, readings.co2.c_str()) ||
-        !mqtt.publish(TOPIC_VOC, readings.voc.c_str()) ||
-        !mqtt.publish(TOPIC_VERSION, readings.version.c_str()) ||
-        !mqtt.publish(TOPIC_AMBIENTLIGHT, readings.ambientLight.c_str()))
+    if (!publish(&mqtt, TOPIC_PRESSURE, deviceId, readings.pressure) ||
+        !publish(&mqtt, TOPIC_CO2, deviceId, readings.co2) ||
+        !publish(&mqtt, TOPIC_VOC, deviceId, readings.voc) ||
+        !publish(&mqtt, TOPIC_VERSION, deviceId, readings.version) ||
+        !publish(&mqtt, TOPIC_AMBIENTLIGHT, deviceId, readings.ambientLight))
     {
       Serial.println(".. error publishing!");
       return false;
