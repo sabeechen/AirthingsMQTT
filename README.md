@@ -4,6 +4,7 @@ My modifications:
 - added device ID to MQTT topic
 - added a few delays for robustness
 - added visual feedback: the LED lights up while processing
+- renamed the file to accomodate Arduino IDE
 
 Original README below.
 
