@@ -1,3 +1,12 @@
+My modifications:
+==========
+- added Wave Plus support, much inspired from: https://github.com/esphome/esphome/tree/aec02afcdc36d0c626db727d27dd46888c2578de/esphome/components/airthings_wave_plus
+- added device ID to MQTT topic
+- added a few delays for robustness
+- added visual feedback: the LED lights up while processing
+
+Original README below.
+
 Airthing MQTT Bridge via an ESP32
 ==========
 
